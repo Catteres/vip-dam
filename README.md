@@ -13,6 +13,7 @@ Two-interface system:
 - **Framework:** Next.js 15 (App Router)
 - **Database/Auth/Storage:** Supabase
 - **Styling:** Tailwind CSS
+- **Image Processing:** react-easy-crop, @imgly/background-removal (browser ML)
 - **Deployment:** Hostinger VPS via PM2
 
 ## Database Schema
@@ -84,6 +85,15 @@ ssh root@82.25.91.9 "pm2 restart vip-dam"
 - [x] **Favorites** - heart assets to save them
 - [x] **Download history** - track your downloads
 - [x] Download logging to activity
+
+### Image Processing (client-side)
+- [x] **Crop tool** - Aspect ratio presets (1:1, 4:5, 16:9, etc.), zoom, rounded corners
+- [x] **Background removal** - AI-powered (browser ML, no API costs)
+  - Solid colors: white, gray, custom picker
+  - Custom image upload as background
+  - Transparent PNG export
+- [x] Format conversion (WebP, JPG, PNG)
+- [x] Size presets (1920px, 1280px, 640px, custom)
 
 ### Security
 - [x] Role-based access control
