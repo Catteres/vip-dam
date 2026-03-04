@@ -3,6 +3,7 @@
 import { useState, useCallback } from 'react'
 import { SupabaseClient } from '@supabase/supabase-js'
 import Cropper, { Area } from 'react-easy-crop'
+import BackgroundRemover from './BackgroundRemover'
 
 interface Asset {
   id: string
@@ -123,6 +124,7 @@ export default function DownloadOptions({ asset, supabase, currentUserId }: Down
   
   // Crop state
   const [showCropper, setShowCropper] = useState(false)
+  const [showBgRemover, setShowBgRemover] = useState(false)
   const [crop, setCrop] = useState({ x: 0, y: 0 })
   const [zoom, setZoom] = useState(1)
   const [aspectPreset, setAspectPreset] = useState<AspectPreset>('1:1')
@@ -263,6 +265,12 @@ export default function DownloadOptions({ asset, supabase, currentUserId }: Down
               Crop
             </button>
             <button
+              onClick={() => setShowBgRemover(true)}
+              className="text-xs text-cyan-400 hover:text-cyan-300"
+            >
+              Background
+            </button>
+            <button
               onClick={() => setShowAdvanced(!showAdvanced)}
               className="text-xs text-cyan-400 hover:text-cyan-300"
             >
@@ -388,6 +396,15 @@ export default function DownloadOptions({ asset, supabase, currentUserId }: Down
         )}
       </div>
 
+      {/* Background Remover Modal */}
+      {showBgRemover && (
+        <BackgroundRemover
+          imageUrl={getImageUrl()}
+          filename={asset.name}
+          onClose={() => setShowBgRemover(false)}
+        />
+      )}
+
       {/* Crop Modal */}
       {showCropper && (
         <div className="fixed inset-0 bg-black/90 z-[60] flex flex-col">
@@ -416,9 +433,31 @@ export default function DownloadOptions({ asset, supabase, currentUserId }: Down
               onZoomChange={setZoom}
               style={{
                 containerStyle: { background: '#18181b' },
-                cropAreaStyle: { border: '2px solid #06b6d4' }
+                cropAreaStyle: { 
+                  border: '2px solid #06b6d4',
+                  borderRadius: `${borderRadius}%`
+                }
+              }}
+              classes={{
+                cropAreaClassName: 'transition-all duration-200'
               }}
             />
+            {/* Rounded corners preview overlay */}
+            {borderRadius > 0 && croppedAreaPixels && (
+              <div 
+                className="pointer-events-none absolute inset-0 flex items-center justify-center"
+                style={{ zIndex: 10 }}
+              >
+                <div 
+                  className="border-2 border-cyan-400 border-dashed opacity-60"
+                  style={{
+                    borderRadius: `${borderRadius}%`,
+                    width: croppedAreaPixels.width > 0 ? '50%' : 0,
+                    aspectRatio: croppedAreaPixels.width / croppedAreaPixels.height
+                  }}
+                />
+              </div>
+            )}
           </div>
 
           {/* Controls */}
