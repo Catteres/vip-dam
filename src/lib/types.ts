@@ -17,8 +17,22 @@ export interface Asset {
 export interface Tag {
   id: string
   label: string
-  category: string | null
+  category: string | null  // legacy field
   created_at: string
+  categories?: Category[]  // populated via junction
+}
+
+export interface Category {
+  id: string
+  name: string
+  color: string
+  sort_order: number
+  created_at: string
+}
+
+export interface TagCategory {
+  tag_id: string
+  category_id: string
 }
 
 export interface AssetTag {

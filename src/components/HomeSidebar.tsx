@@ -2,9 +2,10 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import type { User } from '@supabase/supabase-js'
+import type { Folder } from '@/lib/types'
 
 const navigation = [
   { name: 'Browse', href: '/home', icon: '🖼️' },
@@ -14,18 +15,50 @@ const navigation = [
 
 export default function HomeSidebar({ user }: { user: User }) {
   const [isOpen, setIsOpen] = useState(false)
+  const [folders, setFolders] = useState<Folder[]>([])
+  const [foldersLoading, setFoldersLoading] = useState(true)
   const pathname = usePathname()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const supabase = createClient()
+
+  // Get active folder from URL
+  const activeFolderId = searchParams.get('folder')
 
   useEffect(() => {
     setIsOpen(false)
   }, [pathname])
 
+  useEffect(() => {
+    loadFolders()
+  }, [])
+
+  const loadFolders = async () => {
+    setFoldersLoading(true)
+    const { data } = await supabase
+      .from('dam_folders')
+      .select('*')
+      .order('name')
+    
+    setFolders(data || [])
+    setFoldersLoading(false)
+  }
+
   const handleSignOut = async () => {
     await supabase.auth.signOut()
     router.push('/auth/login')
     router.refresh()
+  }
+
+  const applyFolderFilter = (folder: Folder) => {
+    // Navigate to /home with folder ID in query param
+    const params = new URLSearchParams()
+    params.set('folder', folder.id)
+    router.push(`/home?${params.toString()}`)
+  }
+
+  const clearFolderFilter = () => {
+    router.push('/home')
   }
 
   return (
@@ -85,7 +118,7 @@ export default function HomeSidebar({ user }: { user: User }) {
 
         <nav className="flex-1 px-4 space-y-1 overflow-y-auto">
           {navigation.map((item) => {
-            const isActive = pathname === item.href || 
+            const isActive = (pathname === item.href && !activeFolderId) || 
               (item.href !== '/home' && pathname.startsWith(item.href))
             return (
               <Link
@@ -108,10 +141,51 @@ export default function HomeSidebar({ user }: { user: User }) {
             <p className="px-4 text-xs text-gray-500 uppercase tracking-wider">Folders</p>
           </div>
           
-          {/* Placeholder for dynamic folders */}
-          <div className="text-gray-500 text-sm px-4 py-2">
-            No folders yet
-          </div>
+          {/* Folders List */}
+          {foldersLoading ? (
+            <div className="px-4 py-2">
+              <div className="animate-pulse flex items-center gap-2">
+                <div className="w-4 h-4 bg-gray-700 rounded"></div>
+                <div className="h-4 bg-gray-700 rounded w-24"></div>
+              </div>
+            </div>
+          ) : folders.length === 0 ? (
+            <div className="text-gray-500 text-sm px-4 py-2">
+              No folders yet
+            </div>
+          ) : (
+            <div className="space-y-1">
+              {folders.map(folder => {
+                const isActive = activeFolderId === folder.id
+                return (
+                  <button
+                    key={folder.id}
+                    onClick={() => applyFolderFilter(folder)}
+                    className={`w-full flex items-center px-4 py-2.5 text-sm font-medium rounded-lg transition-colors text-left ${
+                      isActive
+                        ? 'bg-cyan-600 text-white'
+                        : 'text-gray-300 hover:bg-gray-700 hover:text-white'
+                    }`}
+                    title={folder.description || folder.name}
+                  >
+                    <span className="mr-3 text-lg">📁</span>
+                    <span className="truncate">{folder.name}</span>
+                  </button>
+                )
+              })}
+              
+              {/* Clear folder filter if active */}
+              {activeFolderId && (
+                <button
+                  onClick={clearFolderFilter}
+                  className="w-full flex items-center px-4 py-2 text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
+                >
+                  <span className="mr-3">✕</span>
+                  Clear folder filter
+                </button>
+              )}
+            </div>
+          )}
         </nav>
 
         <div className="p-4 border-t border-gray-700">

@@ -17,18 +17,46 @@ export default function LoginPage() {
     setLoading(true)
     setError('')
 
-    const { error } = await supabase.auth.signInWithPassword({
+    // Sign in with Supabase Auth
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
       email,
       password,
     })
 
-    if (error) {
-      setError(error.message)
+    if (authError) {
+      setError(authError.message)
       setLoading(false)
-    } else {
-      router.push('/')
-      router.refresh()
+      return
     }
+
+    if (!authData.user) {
+      setError('Login failed. Please try again.')
+      setLoading(false)
+      return
+    }
+
+    // Fetch user role from dam_users table
+    const { data: userData, error: userError } = await supabase
+      .from('dam_users')
+      .select('role')
+      .eq('id', authData.user.id)
+      .single()
+
+    if (userError || !userData) {
+      // User not in dam_users table - might be a new user or not authorized
+      setError('User not authorized for VIP DAM. Contact admin.')
+      await supabase.auth.signOut()
+      setLoading(false)
+      return
+    }
+
+    // Redirect based on role
+    if (userData.role === 'admin') {
+      router.push('/admin')
+    } else {
+      router.push('/home')
+    }
+    router.refresh()
   }
 
   return (

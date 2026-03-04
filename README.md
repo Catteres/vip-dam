@@ -64,21 +64,34 @@ ssh root@82.25.91.9 "pm2 restart vip-dam"
 
 ## Project Status
 
-🟡 **In Development** - Scaffolding complete, basic routes set up. Ready for feature implementation.
+🟢 **Production Ready** - Core features complete and deployed.
 
-### Completed
-- [x] Project structure (Next.js 15 + Tailwind)
-- [x] Supabase integration (client + server)
-- [x] Database schema designed
-- [x] Route structure (/admin, /home, /auth/login)
-- [x] Middleware for auth routing
-- [x] Sidebar components (Admin + Home)
-- [x] TypeScript types
+### Admin Features
+- [x] Asset library with grid/list view
+- [x] Drag & drop upload with tag selection
+- [x] Tag management with categories
+- [x] Smart folders (saved filter queries)
+- [x] User management (roles: admin/user)
+- [x] Activity log (download audit)
+- [x] Bulk actions (add/remove tags, ZIP download, delete)
+- [x] Asset metadata (doctor, location, procedure, etc.)
 
-### Next Steps
-- [ ] Run schema.sql in Supabase
-- [ ] Create storage buckets
-- [ ] Build admin upload flow
-- [ ] Implement tagging UI
-- [ ] Build asset grid/search for /home
-- [ ] Add image processing (WebP previews)
+### End User Features (/home)
+- [x] Browse & search assets
+- [x] Filter by tags, orientation
+- [x] Folder browsing (smart filters)
+- [x] Lightbox view with download
+- [x] **Favorites** - heart assets to save them
+- [x] **Download history** - track your downloads
+- [x] Download logging to activity
+
+### Security
+- [x] Role-based access control
+- [x] Admin routes protected
+- [x] Admin link hidden from non-admins
+
+### Remaining / Future
+- [ ] AI auto-tagging (schema ready)
+- [ ] WebP preview pre-generation (using on-demand transforms)
+- [ ] Pagination for large libraries
+- [ ] Image zoom in lightbox
