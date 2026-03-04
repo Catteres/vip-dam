@@ -41,8 +41,28 @@ const ASPECT_PRESETS: Record<AspectPreset, { label: string; value?: number }> = 
   '3:2': { label: '3:2', value: 3/2 },
 }
 
+// Helper function to draw rounded rectangle path
+function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {
+  ctx.beginPath()
+  ctx.moveTo(x + radius, y)
+  ctx.lineTo(x + width - radius, y)
+  ctx.quadraticCurveTo(x + width, y, x + width, y + radius)
+  ctx.lineTo(x + width, y + height - radius)
+  ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height)
+  ctx.lineTo(x + radius, y + height)
+  ctx.quadraticCurveTo(x, y + height, x, y + height - radius)
+  ctx.lineTo(x, y + radius)
+  ctx.quadraticCurveTo(x, y, x + radius, y)
+  ctx.closePath()
+}
+
 // Helper to crop image using canvas
-async function getCroppedImg(imageSrc: string, pixelCrop: Area, format: string = 'image/jpeg'): Promise<Blob> {
+async function getCroppedImg(
+  imageSrc: string, 
+  pixelCrop: Area, 
+  format: string = 'image/jpeg',
+  borderRadius: number = 0
+): Promise<Blob> {
   const image = new Image()
   image.crossOrigin = 'anonymous'
   
@@ -58,6 +78,16 @@ async function getCroppedImg(imageSrc: string, pixelCrop: Area, format: string =
 
   canvas.width = pixelCrop.width
   canvas.height = pixelCrop.height
+
+  // Apply rounded corners if specified (only makes sense for PNG with transparency)
+  if (borderRadius > 0) {
+    // Clear with transparency
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    
+    // Create clipping path with rounded corners
+    roundedRect(ctx, 0, 0, pixelCrop.width, pixelCrop.height, borderRadius)
+    ctx.clip()
+  }
 
   ctx.drawImage(
     image,
@@ -97,6 +127,7 @@ export default function DownloadOptions({ asset, supabase, currentUserId }: Down
   const [zoom, setZoom] = useState(1)
   const [aspectPreset, setAspectPreset] = useState<AspectPreset>('1:1')
   const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null)
+  const [borderRadius, setBorderRadius] = useState(0) // 0 = no rounding, up to 50 = full circle for square
 
   const onCropComplete = useCallback((_: Area, croppedAreaPixels: Area) => {
     setCroppedAreaPixels(croppedAreaPixels)
@@ -139,9 +170,10 @@ export default function DownloadOptions({ asset, supabase, currentUserId }: Down
     return url.toString()
   }
 
-  const getFilename = (cropped = false) => {
+  const getFilename = (cropped = false, formatOverride?: string) => {
     const baseName = asset.name.replace(/\.[^.]+$/, '')
-    const ext = format === 'original' ? asset.name.split('.').pop() : format
+    const useFormat = formatOverride || format
+    const ext = useFormat === 'original' ? asset.name.split('.').pop() : useFormat
     
     let suffix = ''
     if (cropped) {
@@ -181,9 +213,16 @@ export default function DownloadOptions({ asset, supabase, currentUserId }: Down
 
       if (useCrop && croppedAreaPixels) {
         // Apply crop using canvas
-        const mimeType = format === 'original' ? (asset.mime_type || 'image/jpeg') : `image/${format}`
-        blob = await getCroppedImg(getImageUrl(), croppedAreaPixels, mimeType)
-        filename = getFilename(true)
+        // Force PNG if rounded corners (need transparency)
+        const useFormat = borderRadius > 0 ? 'png' : format
+        const mimeType = useFormat === 'original' ? (asset.mime_type || 'image/jpeg') : `image/${useFormat}`
+        
+        // Calculate pixel border radius (percentage of smaller dimension)
+        const minDim = Math.min(croppedAreaPixels.width, croppedAreaPixels.height)
+        const pixelRadius = Math.round((borderRadius / 100) * (minDim / 2))
+        
+        blob = await getCroppedImg(getImageUrl(), croppedAreaPixels, mimeType, pixelRadius)
+        filename = getFilename(true, borderRadius > 0 ? 'png' : undefined)
         setShowCropper(false)
       } else {
         // Direct download
@@ -416,6 +455,53 @@ export default function DownloadOptions({ asset, supabase, currentUserId }: Down
                 onChange={(e) => setZoom(parseFloat(e.target.value))}
                 className="w-full accent-cyan-500"
               />
+            </div>
+
+            {/* Rounded Corners */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs text-zinc-500">
+                  Rounded Corners: {borderRadius === 0 ? 'None' : borderRadius === 100 ? 'Circle' : `${borderRadius}%`}
+                </label>
+                {borderRadius > 0 && (
+                  <span className="text-xs text-cyan-400">PNG format</span>
+                )}
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                step="5"
+                value={borderRadius}
+                onChange={(e) => setBorderRadius(parseInt(e.target.value))}
+                className="w-full accent-cyan-500"
+              />
+              <div className="flex justify-between mt-1">
+                <button
+                  onClick={() => setBorderRadius(0)}
+                  className={`text-xs px-2 py-1 rounded ${borderRadius === 0 ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-white'}`}
+                >
+                  Sharp
+                </button>
+                <button
+                  onClick={() => setBorderRadius(20)}
+                  className={`text-xs px-2 py-1 rounded ${borderRadius === 20 ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-white'}`}
+                >
+                  Rounded
+                </button>
+                <button
+                  onClick={() => setBorderRadius(50)}
+                  className={`text-xs px-2 py-1 rounded ${borderRadius === 50 ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-white'}`}
+                >
+                  Pill
+                </button>
+                <button
+                  onClick={() => setBorderRadius(100)}
+                  className={`text-xs px-2 py-1 rounded ${borderRadius === 100 ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-white'}`}
+                >
+                  Circle
+                </button>
+              </div>
             </div>
 
             {/* Actions */}
