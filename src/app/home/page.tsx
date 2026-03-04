@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import type { Folder } from '@/lib/types'
 import AssetGridSkeleton from '@/components/AssetGridSkeleton'
+import DownloadOptions from '@/components/DownloadOptions'
 
 interface Asset {
   id: string
@@ -667,36 +668,32 @@ export default function HomePage() {
                 </div>
               )}
 
-              <div className="space-y-2">
-                <button
-                  onClick={() => downloadAsset(selectedAsset)}
-                  className="w-full py-2.5 sm:py-3 bg-cyan-600 text-white rounded-lg hover:bg-cyan-500 font-medium flex items-center justify-center gap-2 text-sm sm:text-base"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                  </svg>
-                  Download
-                </button>
+              {/* Download Options */}
+              <DownloadOptions 
+                asset={selectedAsset} 
+                supabase={supabase}
+                currentUserId={currentUserId}
+              />
 
-                <button
-                  onClick={() => toggleFavorite(selectedAsset.id)}
-                  className={`w-full py-2.5 sm:py-3 rounded-lg font-medium flex items-center justify-center gap-2 text-sm sm:text-base ${
-                    favoriteIds.includes(selectedAsset.id)
-                      ? 'bg-red-600 text-white hover:bg-red-500'
-                      : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
-                  }`}
+              {/* Favorite Button */}
+              <button
+                onClick={() => toggleFavorite(selectedAsset.id)}
+                className={`w-full py-2.5 sm:py-3 rounded-lg font-medium flex items-center justify-center gap-2 text-sm sm:text-base ${
+                  favoriteIds.includes(selectedAsset.id)
+                    ? 'bg-red-600 text-white hover:bg-red-500'
+                    : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                }`}
+              >
+                <svg 
+                  className="w-5 h-5" 
+                  fill={favoriteIds.includes(selectedAsset.id) ? 'currentColor' : 'none'} 
+                  stroke="currentColor" 
+                  viewBox="0 0 24 24"
                 >
-                  <svg 
-                    className="w-5 h-5" 
-                    fill={favoriteIds.includes(selectedAsset.id) ? 'currentColor' : 'none'} 
-                    stroke="currentColor" 
-                    viewBox="0 0 24 24"
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
-                  </svg>
-                  {favoriteIds.includes(selectedAsset.id) ? 'Remove from Favorites' : 'Add to Favorites'}
-                </button>
-              </div>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                </svg>
+                {favoriteIds.includes(selectedAsset.id) ? 'Remove from Favorites' : 'Add to Favorites'}
+              </button>
             </div>
           </div>
         </div>
