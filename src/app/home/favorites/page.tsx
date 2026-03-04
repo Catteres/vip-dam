@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
+import AssetGridSkeleton from '@/components/AssetGridSkeleton'
 
 interface Asset {
   id: string
@@ -43,7 +44,7 @@ export default function FavoritesPage() {
     
     // Get current user
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user?.email) {
+    if (!user?.id) {
       setLoading(false)
       return
     }
@@ -52,7 +53,7 @@ export default function FavoritesPage() {
     const { data: userData } = await supabase
       .from('dam_users')
       .select('favorites')
-      .eq('email', user.email.toLowerCase())
+      .eq('id', user.id)
       .single()
 
     const favIds = userData?.favorites || []
@@ -93,14 +94,14 @@ export default function FavoritesPage() {
     e?.stopPropagation()
     
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user?.email) return
+    if (!user?.id) return
 
     const newFavorites = favoriteIds.filter(id => id !== assetId)
     
     const { error } = await supabase
       .from('dam_users')
       .update({ favorites: newFavorites })
-      .eq('email', user.email.toLowerCase())
+      .eq('id', user.id)
 
     if (!error) {
       setFavoriteIds(newFavorites)
@@ -137,22 +138,14 @@ export default function FavoritesPage() {
     
     // Log the download
     const { data: { user } } = await supabase.auth.getUser()
-    if (user?.email) {
-      const { data: userData } = await supabase
-        .from('dam_users')
-        .select('id')
-        .eq('email', user.email.toLowerCase())
-        .single()
-      
-      if (userData) {
-        await supabase.from('dam_download_log').insert({
-          asset_id: asset.id,
-          user_id: userData.id,
-          format: asset.mime_type || 'unknown',
-          width: asset.width,
-          height: asset.height
-        })
-      }
+    if (user?.id) {
+      await supabase.from('dam_download_log').insert({
+        asset_id: asset.id,
+        user_id: user.id,
+        format: asset.mime_type || 'unknown',
+        width: asset.width,
+        height: asset.height
+      })
     }
     
     const url = getImageUrl(asset.original_path)
@@ -192,12 +185,8 @@ export default function FavoritesPage() {
           {assets.length} {assets.length === 1 ? 'favorite' : 'favorites'}
         </div>
 
-        {/* Loading */}
-        {loading && (
-          <div className="flex items-center justify-center py-12">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-500"></div>
-          </div>
-        )}
+        {/* Loading Skeleton */}
+        {loading && <AssetGridSkeleton variant="favorites" count={12} />}
 
         {/* Empty State */}
         {!loading && assets.length === 0 && (

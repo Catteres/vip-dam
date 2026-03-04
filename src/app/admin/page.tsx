@@ -1,10 +1,12 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
 import AssetDetailModal from '@/components/AssetDetailModal'
 import BulkActionsBar from '@/components/BulkActionsBar'
+
+const PAGE_SIZE = 50
 
 interface Asset {
   id: string
@@ -33,6 +35,9 @@ interface AssetTag {
 
 export default function AdminLibraryPage() {
   const [assets, setAssets] = useState<Asset[]>([])
+  const [totalAssets, setTotalAssets] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [allTags, setAllTags] = useState<Tag[]>([])
   const [assetTags, setAssetTags] = useState<AssetTag[]>([])
   const [loading, setLoading] = useState(true)
@@ -47,11 +52,102 @@ export default function AdminLibraryPage() {
   
   const supabase = createClient()
 
+  // Build query with filters applied
+  const buildAssetQuery = useCallback(() => {
+    let query = supabase
+      .from('dam_assets')
+      .select('*', { count: 'exact' })
+    
+    // Apply search filter
+    if (searchQuery) {
+      query = query.ilike('name', `%${searchQuery}%`)
+    }
+    
+    // Apply orientation filter
+    if (orientationFilter) {
+      query = query.eq('orientation', orientationFilter)
+    }
+    
+    return query.order('created_at', { ascending: false })
+  }, [searchQuery, orientationFilter, supabase])
+
+  // Get total count (with filters but before tag filtering which happens client-side)
+  const getTotalCount = useCallback(async () => {
+    const query = buildAssetQuery()
+    const { count } = await query.limit(0)
+    return count || 0
+  }, [buildAssetQuery])
+
+  // Load assets with pagination
+  const loadAssets = useCallback(async (cursor?: string, append = false) => {
+    if (!append) {
+      setLoading(true)
+    } else {
+      setLoadingMore(true)
+    }
+
+    try {
+      let query = buildAssetQuery()
+      
+      // Apply cursor for pagination
+      if (cursor) {
+        query = query.lt('created_at', cursor)
+      }
+      
+      // Fetch one extra to check if there's more
+      query = query.limit(PAGE_SIZE + 1)
+      
+      const { data, error, count } = await query
+
+      if (error) {
+        console.error('Error loading assets:', error)
+        return
+      }
+
+      const fetchedAssets = data || []
+      const hasMoreResults = fetchedAssets.length > PAGE_SIZE
+      const assetsToAdd = hasMoreResults ? fetchedAssets.slice(0, PAGE_SIZE) : fetchedAssets
+
+      if (append) {
+        setAssets(prev => [...prev, ...assetsToAdd])
+      } else {
+        setAssets(assetsToAdd)
+        // Only update total on initial load (count includes all matching DB filters)
+        if (count !== null) {
+          setTotalAssets(count)
+        }
+      }
+      
+      setHasMore(hasMoreResults)
+    } finally {
+      setLoading(false)
+      setLoadingMore(false)
+    }
+  }, [buildAssetQuery])
+
+  // Load more assets
+  const loadMore = () => {
+    if (assets.length > 0 && hasMore && !loadingMore) {
+      const lastAsset = assets[assets.length - 1]
+      loadAssets(lastAsset.created_at, true)
+    }
+  }
+
   useEffect(() => {
     loadAssets()
     loadTags()
     loadAssetTags()
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset pagination when filters change
+  useEffect(() => {
+    // Skip initial render
+    const timer = setTimeout(() => {
+      loadAssets()
+    }, 300) // Debounce filter changes
+    
+    return () => clearTimeout(timer)
+  }, [searchQuery, orientationFilter]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadTags = async () => {
     const { data } = await supabase
@@ -67,21 +163,6 @@ export default function AdminLibraryPage() {
       .from('dam_asset_tags')
       .select('asset_id, tag_id')
     setAssetTags(data || [])
-  }
-
-  const loadAssets = async () => {
-    setLoading(true)
-    const { data, error } = await supabase
-      .from('dam_assets')
-      .select('*')
-      .order('created_at', { ascending: false })
-
-    if (error) {
-      console.error('Error loading assets:', error)
-    } else {
-      setAssets(data || [])
-    }
-    setLoading(false)
   }
 
   const getImageUrl = (path: string, thumbnail = false) => {
@@ -128,18 +209,8 @@ export default function AdminLibraryPage() {
     )
   }
 
-  // Filter assets
+  // Filter assets (client-side tag filtering on already-loaded assets)
   const filteredAssets = assets.filter(asset => {
-    // Search filter
-    if (searchQuery && !asset.name.toLowerCase().includes(searchQuery.toLowerCase())) {
-      return false
-    }
-    
-    // Orientation filter
-    if (orientationFilter && asset.orientation !== orientationFilter) {
-      return false
-    }
-    
     // Tag filter - asset must have ALL selected tags
     if (selectedTags.length > 0) {
       const assetTagIds = assetTags
@@ -151,6 +222,12 @@ export default function AdminLibraryPage() {
     
     return true
   })
+
+  // Calculate display counts
+  const displayedCount = filteredAssets.length
+  const totalDisplayCount = selectedTags.length > 0 
+    ? `${displayedCount} filtered` 
+    : `${displayedCount} of ${totalAssets}`
 
   const formatFileSize = (bytes: number | null) => {
     if (!bytes) return '-'
@@ -173,7 +250,7 @@ export default function AdminLibraryPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-white">Asset Library</h1>
-          <p className="text-zinc-400 text-sm mt-1">{filteredAssets.length} assets</p>
+          <p className="text-zinc-400 text-sm mt-1">{totalDisplayCount} assets</p>
         </div>
         <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
           {/* View toggle - hidden on small mobile */}
@@ -402,6 +479,40 @@ export default function AdminLibraryPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Load More Button */}
+      {!loading && hasMore && selectedTags.length === 0 && (
+        <div className="mt-8 text-center">
+          <button
+            onClick={loadMore}
+            disabled={loadingMore}
+            className="px-6 py-3 bg-zinc-800 border border-zinc-700 text-white rounded-lg hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {loadingMore ? (
+              <span className="flex items-center gap-2">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                Loading...
+              </span>
+            ) : (
+              `Load More (${assets.length} of ${totalAssets})`
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* Tag filter notice */}
+      {selectedTags.length > 0 && hasMore && (
+        <div className="mt-6 text-center text-sm text-zinc-500">
+          <p>Tag filtering applies to loaded assets only.</p>
+          <button
+            onClick={loadMore}
+            disabled={loadingMore}
+            className="mt-2 text-cyan-400 hover:text-cyan-300"
+          >
+            Load more assets to filter
+          </button>
         </div>
       )}
 

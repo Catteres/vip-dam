@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import type { Folder } from '@/lib/types'
+import AssetGridSkeleton from '@/components/AssetGridSkeleton'
 
 interface Asset {
   id: string
@@ -43,7 +44,7 @@ export default function HomePage() {
   const [selectedAsset, setSelectedAsset] = useState<AssetWithTags | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
   const [favoriteIds, setFavoriteIds] = useState<string[]>([])
-  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null)
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   
   // Filters
   const [searchQuery, setSearchQuery] = useState('')
@@ -61,12 +62,12 @@ export default function HomePage() {
   useEffect(() => {
     const loadUserData = async () => {
       const { data: { user } } = await supabase.auth.getUser()
-      if (user?.email) {
-        setCurrentUserEmail(user.email.toLowerCase())
+      if (user?.id) {
+        setCurrentUserId(user.id)
         const { data } = await supabase
           .from('dam_users')
           .select('role, favorites')
-          .eq('email', user.email.toLowerCase())
+          .eq('id', user.id)
           .single()
         setIsAdmin(data?.role === 'admin')
         setFavoriteIds(data?.favorites || [])
@@ -77,7 +78,7 @@ export default function HomePage() {
 
   const toggleFavorite = async (assetId: string, e?: React.MouseEvent) => {
     e?.stopPropagation()
-    if (!currentUserEmail) return
+    if (!currentUserId) return
 
     const isFavorite = favoriteIds.includes(assetId)
     const newFavorites = isFavorite
@@ -90,7 +91,7 @@ export default function HomePage() {
     const { error } = await supabase
       .from('dam_users')
       .update({ favorites: newFavorites })
-      .eq('email', currentUserEmail)
+      .eq('id', currentUserId)
 
     if (error) {
       // Revert on error
@@ -256,22 +257,14 @@ export default function HomePage() {
     e?.stopPropagation()
     
     // Log the download
-    if (currentUserEmail) {
-      const { data: userData } = await supabase
-        .from('dam_users')
-        .select('id')
-        .eq('email', currentUserEmail)
-        .single()
-      
-      if (userData) {
-        await supabase.from('dam_download_log').insert({
-          asset_id: asset.id,
-          user_id: userData.id,
-          format: asset.mime_type || 'unknown',
-          width: asset.width,
-          height: asset.height
-        })
-      }
+    if (currentUserId) {
+      await supabase.from('dam_download_log').insert({
+        asset_id: asset.id,
+        user_id: currentUserId,
+        format: asset.mime_type || 'unknown',
+        width: asset.width,
+        height: asset.height
+      })
     }
     
     const url = getImageUrl(asset.original_path)
@@ -419,12 +412,8 @@ export default function HomePage() {
           {(searchQuery || selectedTags.length > 0 || orientationFilter || activeFolder) && ' matching filters'}
         </div>
 
-        {/* Loading */}
-        {loading && (
-          <div className="flex items-center justify-center py-12">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-500"></div>
-          </div>
-        )}
+        {/* Loading Skeleton */}
+        {loading && <AssetGridSkeleton variant="home" count={12} />}
 
         {/* Empty State */}
         {!loading && filteredAssets.length === 0 && (
