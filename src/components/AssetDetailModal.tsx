@@ -22,6 +22,13 @@ interface Metadata {
   value: string
 }
 
+interface ShareLink {
+  id: string
+  token: string
+  expires_at: string
+  created_at: string
+}
+
 const COMMON_METADATA_KEYS = ['Doctor', 'Location', 'Procedure', 'Patient ID', 'Department', 'Notes']
 
 interface Props {
@@ -29,6 +36,15 @@ interface Props {
   onClose: () => void
   onUpdate: () => void
   onDelete: () => void
+}
+
+function generateToken(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+  let token = ''
+  for (let i = 0; i < 32; i++) {
+    token += chars.charAt(Math.floor(Math.random() * chars.length))
+  }
+  return token
 }
 
 export default function AssetDetailModal({ asset, onClose, onUpdate, onDelete }: Props) {
@@ -49,6 +65,12 @@ export default function AssetDetailModal({ asset, onClose, onUpdate, onDelete }:
   const [newMetaValue, setNewMetaValue] = useState('')
   const [showAddMeta, setShowAddMeta] = useState(false)
   const [savingMeta, setSavingMeta] = useState(false)
+  
+  // Share links
+  const [showShareModal, setShowShareModal] = useState(false)
+  const [shareLink, setShareLink] = useState<ShareLink | null>(null)
+  const [creatingShare, setCreatingShare] = useState(false)
+  const [copiedShare, setCopiedShare] = useState(false)
   
   const supabase = createClient()
 
@@ -76,6 +98,57 @@ export default function AssetDetailModal({ asset, onClose, onUpdate, onDelete }:
     
     setMetadata(metaData || [])
     setLoading(false)
+  }
+
+  const createShareLink = async () => {
+    setCreatingShare(true)
+    
+    // Get current user
+    const { data: { user } } = await supabase.auth.getUser()
+    
+    // Generate token and set 7-day expiry
+    const token = generateToken()
+    const expiresAt = new Date()
+    expiresAt.setDate(expiresAt.getDate() + 7)
+    
+    const { data, error } = await supabase
+      .from('dam_share_links')
+      .insert({
+        asset_id: asset.id,
+        token,
+        expires_at: expiresAt.toISOString(),
+        created_by: user?.id || null
+      })
+      .select()
+      .single()
+    
+    if (!error && data) {
+      setShareLink(data)
+    }
+    
+    setCreatingShare(false)
+  }
+
+  const getShareUrl = () => {
+    if (!shareLink) return ''
+    // Build the share URL - using window.location for the base
+    const baseUrl = typeof window !== 'undefined' 
+      ? `${window.location.origin}/vip-dam`
+      : ''
+    return `${baseUrl}/share/${shareLink.token}`
+  }
+
+  const copyShareLink = async () => {
+    const url = getShareUrl()
+    await navigator.clipboard.writeText(url)
+    setCopiedShare(true)
+    setTimeout(() => setCopiedShare(false), 2000)
+  }
+
+  const closeShareModal = () => {
+    setShowShareModal(false)
+    setShareLink(null)
+    setCopiedShare(false)
   }
 
   const addMetadata = async () => {
@@ -508,6 +581,20 @@ export default function AssetDetailModal({ asset, onClose, onUpdate, onDelete }:
                 </button>
               </div>
             </div>
+
+            {/* Share */}
+            <div>
+              <label className="block text-xs font-medium text-zinc-400 mb-2">Share</label>
+              <button
+                onClick={() => setShowShareModal(true)}
+                className="w-full px-3 py-2 bg-zinc-700 text-white rounded-lg text-sm hover:bg-zinc-600 flex items-center justify-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                </svg>
+                Create Shareable Link
+              </button>
+            </div>
           </div>
 
           {/* Footer */}
@@ -521,6 +608,112 @@ export default function AssetDetailModal({ asset, onClose, onUpdate, onDelete }:
           </div>
         </div>
       </div>
+
+      {/* Share Modal */}
+      {showShareModal && (
+        <div 
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4"
+          onClick={closeShareModal}
+        >
+          <div 
+            className="bg-zinc-900 rounded-xl max-w-md w-full p-6"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-white">Share Asset</h3>
+              <button onClick={closeShareModal} className="text-zinc-400 hover:text-white">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {!shareLink ? (
+              <div className="text-center py-4">
+                <p className="text-zinc-400 text-sm mb-4">
+                  Create a shareable link that allows anyone to view and download this asset. The link will expire in 7 days.
+                </p>
+                <button
+                  onClick={createShareLink}
+                  disabled={creatingShare}
+                  className="px-4 py-2 bg-cyan-600 text-white rounded-lg text-sm hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 mx-auto"
+                >
+                  {creatingShare ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      Creating...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                      </svg>
+                      Generate Link
+                    </>
+                  )}
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-medium text-zinc-400 mb-2">Shareable URL</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={getShareUrl()}
+                      readOnly
+                      className="flex-1 px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white text-sm"
+                    />
+                    <button
+                      onClick={copyShareLink}
+                      className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                        copiedShare 
+                          ? 'bg-green-600 text-white' 
+                          : 'bg-cyan-600 text-white hover:bg-cyan-500'
+                      }`}
+                    >
+                      {copiedShare ? (
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                      ) : (
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 text-sm text-zinc-400">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>
+                    Expires on {new Date(shareLink.expires_at).toLocaleDateString('en-US', {
+                      month: 'long',
+                      day: 'numeric',
+                      year: 'numeric'
+                    })}
+                  </span>
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    onClick={closeShareModal}
+                    className="w-full px-4 py-2 bg-zinc-700 text-white rounded-lg text-sm hover:bg-zinc-600"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -34,24 +34,12 @@ export default function DownloadsPage() {
     
     // Get current user
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user?.email) {
+    if (!user?.id) {
       setLoading(false)
       return
     }
 
-    // Get user's ID from dam_users
-    const { data: userData } = await supabase
-      .from('dam_users')
-      .select('id')
-      .eq('email', user.email.toLowerCase())
-      .single()
-
-    if (!userData) {
-      setLoading(false)
-      return
-    }
-
-    // Load user's download history
+    // Load user's download history (user.id matches dam_users.id)
     const { data, error } = await supabase
       .from('dam_download_log')
       .select(`
@@ -68,7 +56,7 @@ export default function DownloadsPage() {
           mime_type
         )
       `)
-      .eq('user_id', userData.id)
+      .eq('user_id', user.id)
       .order('created_at', { ascending: false })
       .limit(100)
 
@@ -105,22 +93,14 @@ export default function DownloadsPage() {
 
     // Log the re-download
     const { data: { user } } = await supabase.auth.getUser()
-    if (user?.email) {
-      const { data: userData } = await supabase
-        .from('dam_users')
-        .select('id')
-        .eq('email', user.email.toLowerCase())
-        .single()
-      
-      if (userData) {
-        await supabase.from('dam_download_log').insert({
-          asset_id: download.asset.id,
-          user_id: userData.id,
-          format: download.asset.mime_type || 'unknown',
-          width: download.asset.width,
-          height: download.asset.height
-        })
-      }
+    if (user?.id) {
+      await supabase.from('dam_download_log').insert({
+        asset_id: download.asset.id,
+        user_id: user.id,
+        format: download.asset.mime_type || 'unknown',
+        width: download.asset.width,
+        height: download.asset.height
+      })
     }
 
     const url = getImageUrl(download.asset.original_path)

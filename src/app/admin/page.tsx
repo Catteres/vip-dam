@@ -71,13 +71,6 @@ export default function AdminLibraryPage() {
     return query.order('created_at', { ascending: false })
   }, [searchQuery, orientationFilter, supabase])
 
-  // Get total count (with filters but before tag filtering which happens client-side)
-  const getTotalCount = useCallback(async () => {
-    const query = buildAssetQuery()
-    const { count } = await query.limit(0)
-    return count || 0
-  }, [buildAssetQuery])
-
   // Load assets with pagination
   const loadAssets = useCallback(async (cursor?: string, append = false) => {
     if (!append) {

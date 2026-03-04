@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
@@ -41,6 +41,7 @@ export default function HomePage() {
   const [assets, setAssets] = useState<AssetWithTags[]>([])
   const [allTags, setAllTags] = useState<Tag[]>([])
   const [loading, setLoading] = useState(true)
+  const [searching, setSearching] = useState(false)
   const [selectedAsset, setSelectedAsset] = useState<AssetWithTags | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
   const [favoriteIds, setFavoriteIds] = useState<string[]>([])
@@ -48,8 +49,11 @@ export default function HomePage() {
   
   // Filters
   const [searchQuery, setSearchQuery] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [selectedTags, setSelectedTags] = useState<string[]>([])
   const [orientationFilter, setOrientationFilter] = useState<string>('')
+  const [serverSearchFailed, setServerSearchFailed] = useState(false)
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   
   // Folder filter from URL
   const searchParams = useSearchParams()
@@ -119,6 +123,7 @@ export default function HomePage() {
       const fq = data.filter_query as FilterQuery
       if (fq) {
         setSearchQuery(fq.search || '')
+        setDebouncedSearch(fq.search || '')
         setSelectedTags(fq.tags || [])
         setOrientationFilter(fq.orientation || '')
       }
@@ -135,19 +140,43 @@ export default function HomePage() {
   useEffect(() => {
     if (!folderId) {
       setSearchQuery('')
+      setDebouncedSearch('')
       setSelectedTags([])
       setOrientationFilter('')
     }
   }, [folderId])
 
+  // Debounce search query - 300ms delay
   useEffect(() => {
-    loadData()
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current)
+    }
+    
+    if (searchQuery !== debouncedSearch) {
+      setSearching(true)
+      searchTimeoutRef.current = setTimeout(() => {
+        setDebouncedSearch(searchQuery)
+      }, 300)
+    }
+    
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current)
+      }
+    }
+  }, [searchQuery, debouncedSearch])
+
+  // Load data when debounced search changes
+  useEffect(() => {
+    loadData(debouncedSearch)
+  }, [debouncedSearch])
+
+  // Initial load
+  useEffect(() => {
+    loadTags()
   }, [])
 
-  const loadData = async () => {
-    setLoading(true)
-    
-    // Load all tags
+  const loadTags = async () => {
     const { data: tags } = await supabase
       .from('dam_tags')
       .select('*')
@@ -155,31 +184,72 @@ export default function HomePage() {
       .order('label')
     
     setAllTags(tags || [])
+  }
 
-    // Load assets with their tags
-    const { data: assetsData, error } = await supabase
-      .from('dam_assets')
-      .select(`
-        *,
-        dam_asset_tags (
-          tag:dam_tags (*)
-        )
-      `)
-      .order('created_at', { ascending: false })
+  const loadData = async (searchTerm: string = '') => {
+    // Only show full loading state on initial load
+    if (assets.length === 0) {
+      setLoading(true)
+    }
 
-    if (error) {
-      console.error('Error loading assets:', error)
-    } else {
-      // Transform to include tags array
-      const assetsWithTags = (assetsData || []).map(asset => ({
-        ...asset,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        tags: asset.dam_asset_tags?.map((at: any) => at.tag).filter(Boolean) || []
-      }))
-      setAssets(assetsWithTags)
+    try {
+      let assetIds: string[] | null = null
+      
+      // Try server-side search if there's a search term
+      if (searchTerm.trim() && !serverSearchFailed) {
+        const { data: searchResults, error: rpcError } = await supabase
+          .rpc('search_dam_assets', { search_query: searchTerm.trim() })
+        
+        if (rpcError) {
+          console.warn('Server search failed, falling back to client-side:', rpcError)
+          setServerSearchFailed(true)
+        } else if (searchResults) {
+          assetIds = searchResults.map((r: { asset_id: string }) => r.asset_id)
+        }
+      }
+
+      // Build query for assets
+      let query = supabase
+        .from('dam_assets')
+        .select(`
+          *,
+          dam_asset_tags (
+            tag:dam_tags (*)
+          )
+        `)
+        .order('created_at', { ascending: false })
+
+      // If server search succeeded, filter by IDs
+      if (assetIds !== null) {
+        if (assetIds.length === 0) {
+          // No results from search
+          setAssets([])
+          setLoading(false)
+          setSearching(false)
+          return
+        }
+        query = query.in('id', assetIds)
+      }
+
+      const { data: assetsData, error } = await query
+
+      if (error) {
+        console.error('Error loading assets:', error)
+      } else {
+        // Transform to include tags array
+        const assetsWithTags = (assetsData || []).map(asset => ({
+          ...asset,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          tags: asset.dam_asset_tags?.map((at: any) => at.tag).filter(Boolean) || []
+        }))
+        setAssets(assetsWithTags)
+      }
+    } catch (err) {
+      console.error('Error in loadData:', err)
     }
     
     setLoading(false)
+    setSearching(false)
   }
 
   const getImageUrl = (path: string, thumbnail = false) => {
@@ -206,13 +276,14 @@ export default function HomePage() {
     )
   }
 
-  // Filter assets - including folder date range if applicable
+  // Filter assets - client-side filters for orientation, tags, and date range
+  // Also handles search fallback if server search failed
   const filteredAssets = assets.filter(asset => {
     const folderFilter = activeFolder?.filter_query as FilterQuery | undefined
     
-    // Search filter
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase()
+    // Search filter (fallback if server search failed)
+    if (serverSearchFailed && debouncedSearch) {
+      const query = debouncedSearch.toLowerCase()
       const nameMatch = asset.name.toLowerCase().includes(query)
       const tagMatch = asset.tags.some(t => t.label.toLowerCase().includes(query))
       if (!nameMatch && !tagMatch) return false
@@ -348,11 +419,18 @@ export default function HomePage() {
               </svg>
               <input
                 type="text"
-                placeholder="Search..."
+                placeholder="Search by name, tag, or metadata..."
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 className="w-full pl-10 sm:pl-12 pr-4 py-2.5 sm:py-3 bg-zinc-900 border border-zinc-800 rounded-xl text-white placeholder-zinc-500 focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
               />
+              {/* Searching indicator */}
+              {searching && (
+                <div className="absolute right-3 sm:right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-cyan-500"></div>
+                  <span className="text-xs text-zinc-500 hidden sm:inline">Searching...</span>
+                </div>
+              )}
             </div>
             
             <select
@@ -408,20 +486,29 @@ export default function HomePage() {
 
         {/* Results Count */}
         <div className="mb-4 text-sm text-zinc-500">
-          {filteredAssets.length} {filteredAssets.length === 1 ? 'asset' : 'assets'}
-          {(searchQuery || selectedTags.length > 0 || orientationFilter || activeFolder) && ' matching filters'}
+          {searching ? (
+            <span className="flex items-center gap-2">
+              <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-cyan-500"></div>
+              Searching...
+            </span>
+          ) : (
+            <>
+              {filteredAssets.length} {filteredAssets.length === 1 ? 'asset' : 'assets'}
+              {(debouncedSearch || selectedTags.length > 0 || orientationFilter || activeFolder) && ' matching filters'}
+            </>
+          )}
         </div>
 
         {/* Loading Skeleton */}
         {loading && <AssetGridSkeleton variant="home" count={12} />}
 
         {/* Empty State */}
-        {!loading && filteredAssets.length === 0 && (
+        {!loading && !searching && filteredAssets.length === 0 && (
           <div className="text-center py-12">
             <div className="text-zinc-600 text-5xl mb-4">🔍</div>
             <h3 className="text-lg font-medium text-white mb-1">No assets found</h3>
             <p className="text-zinc-400">
-              {assets.length === 0 
+              {assets.length === 0 && !debouncedSearch
                 ? 'The library is empty'
                 : 'Try adjusting your search or filters'
               }

@@ -1,7 +1,11 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
+
+// Bulk download limits
+const MAX_BULK_FILES = 50
+const MAX_BULK_SIZE_BYTES = 500 * 1024 * 1024 // 500MB
 
 interface Tag {
   id: string
@@ -13,6 +17,7 @@ interface Asset {
   id: string
   name: string
   original_path: string
+  file_size_bytes?: number | null
 }
 
 interface BulkActionsBarProps {
@@ -21,6 +26,14 @@ interface BulkActionsBarProps {
   allTags: Tag[]
   onClearSelection: () => void
   onRefresh: () => void
+}
+
+function formatFileSize(bytes: number | null | undefined): string {
+  if (!bytes) return 'Unknown'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
 
 export default function BulkActionsBar({
@@ -34,6 +47,11 @@ export default function BulkActionsBar({
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
   const [processing, setProcessing] = useState(false)
   const [downloading, setDownloading] = useState(false)
+  const [downloadProgress, setDownloadProgress] = useState<{ current: number; total: number } | null>(null)
+  const [showLimitWarning, setShowLimitWarning] = useState(false)
+  const [limitWarningMessage, setLimitWarningMessage] = useState('')
+  
+  const abortControllerRef = useRef<AbortController | null>(null)
   
   const supabase = createClient()
   const selectedCount = selectedIds.size
@@ -41,6 +59,11 @@ export default function BulkActionsBar({
   if (selectedCount === 0) return null
 
   const selectedAssets = assets.filter(a => selectedIds.has(a.id))
+
+  // Calculate total size of selected assets
+  const totalSelectedSize = selectedAssets.reduce((sum, asset) => {
+    return sum + (asset.file_size_bytes || 0)
+  }, 0)
 
   const handleAddTags = async () => {
     if (selectedTagIds.length === 0) return
@@ -120,9 +143,43 @@ export default function BulkActionsBar({
     }
   }
 
+  const checkDownloadLimits = (): { allowed: boolean; message: string } => {
+    const issues: string[] = []
+    
+    if (selectedCount > MAX_BULK_FILES) {
+      issues.push(`• Too many files: ${selectedCount} selected (max ${MAX_BULK_FILES})`)
+    }
+    
+    if (totalSelectedSize > MAX_BULK_SIZE_BYTES) {
+      issues.push(`• Total size too large: ${formatFileSize(totalSelectedSize)} (max ${formatFileSize(MAX_BULK_SIZE_BYTES)})`)
+    }
+    
+    if (issues.length > 0) {
+      return {
+        allowed: false,
+        message: `Cannot download selection:\n\n${issues.join('\n')}\n\nPlease reduce your selection and try again.`
+      }
+    }
+    
+    return { allowed: true, message: '' }
+  }
+
   const handleDownload = async () => {
     if (selectedCount === 0) return
+
+    // Check limits before starting
+    const limitCheck = checkDownloadLimits()
+    if (!limitCheck.allowed) {
+      setLimitWarningMessage(limitCheck.message)
+      setShowLimitWarning(true)
+      return
+    }
+
     setDownloading(true)
+    setDownloadProgress(null)
+
+    // Create abort controller for cancellation
+    abortControllerRef.current = new AbortController()
 
     try {
       // For single file, direct download
@@ -146,8 +203,18 @@ export default function BulkActionsBar({
       const JSZip = (await import('jszip')).default
       const zip = new JSZip()
 
+      setDownloadProgress({ current: 0, total: selectedCount })
+
       // Download each file and add to zip
-      for (const asset of selectedAssets) {
+      for (let i = 0; i < selectedAssets.length; i++) {
+        // Check for cancellation
+        if (abortControllerRef.current?.signal.aborted) {
+          throw new Error('Download cancelled')
+        }
+
+        const asset = selectedAssets[i]
+        setDownloadProgress({ current: i + 1, total: selectedCount })
+
         const { data } = await supabase.storage
           .from('dam-originals')
           .download(asset.original_path)
@@ -155,6 +222,11 @@ export default function BulkActionsBar({
         if (data) {
           zip.file(asset.name, data)
         }
+      }
+
+      // Check for cancellation before generating
+      if (abortControllerRef.current?.signal.aborted) {
+        throw new Error('Download cancelled')
       }
 
       // Generate and download zip
@@ -167,10 +239,22 @@ export default function BulkActionsBar({
       URL.revokeObjectURL(url)
 
     } catch (err) {
-      console.error('Error downloading:', err)
-      alert('Failed to download files')
+      if (err instanceof Error && err.message === 'Download cancelled') {
+        console.log('Download cancelled by user')
+      } else {
+        console.error('Error downloading:', err)
+        alert('Failed to download files')
+      }
     } finally {
       setDownloading(false)
+      setDownloadProgress(null)
+      abortControllerRef.current = null
+    }
+  }
+
+  const handleCancelDownload = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
     }
   }
 
@@ -209,6 +293,9 @@ export default function BulkActionsBar({
             <span className="text-white font-medium">
               {selectedCount} selected
             </span>
+            <span className="text-zinc-500 text-sm hidden sm:inline">
+              ({formatFileSize(totalSelectedSize)})
+            </span>
           </div>
 
           {/* Actions */}
@@ -216,8 +303,8 @@ export default function BulkActionsBar({
             {/* Add Tags */}
             <button
               onClick={() => { setShowTagModal('add'); setSelectedTagIds([]) }}
-              disabled={processing}
-              className="flex items-center gap-2 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm transition-colors"
+              disabled={processing || downloading}
+              className="flex items-center gap-2 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm transition-colors disabled:opacity-50"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
@@ -228,8 +315,8 @@ export default function BulkActionsBar({
             {/* Remove Tags */}
             <button
               onClick={() => { setShowTagModal('remove'); setSelectedTagIds([]) }}
-              disabled={processing}
-              className="flex items-center gap-2 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm transition-colors"
+              disabled={processing || downloading}
+              className="flex items-center gap-2 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm transition-colors disabled:opacity-50"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -238,28 +325,46 @@ export default function BulkActionsBar({
             </button>
 
             {/* Download */}
-            <button
-              onClick={handleDownload}
-              disabled={downloading}
-              className="flex items-center gap-2 px-3 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-sm transition-colors"
-            >
-              {downloading ? (
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              ) : (
+            {downloading ? (
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 px-3 py-2 bg-cyan-600 text-white rounded-lg text-sm">
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  <span className="hidden sm:inline">
+                    {downloadProgress
+                      ? `Preparing ${downloadProgress.current} of ${downloadProgress.total}...`
+                      : 'Preparing...'
+                    }
+                  </span>
+                </div>
+                <button
+                  onClick={handleCancelDownload}
+                  className="flex items-center gap-2 px-3 py-2 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg text-sm transition-colors"
+                  title="Cancel download"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                  <span className="hidden sm:inline">Cancel</span>
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={handleDownload}
+                disabled={processing}
+                className="flex items-center gap-2 px-3 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-sm transition-colors disabled:opacity-50"
+              >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                 </svg>
-              )}
-              <span className="hidden sm:inline">
-                {downloading ? 'Preparing...' : 'Download'}
-              </span>
-            </button>
+                <span className="hidden sm:inline">Download</span>
+              </button>
+            )}
 
             {/* Delete */}
             <button
               onClick={handleDelete}
-              disabled={processing}
-              className="flex items-center gap-2 px-3 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-sm transition-colors"
+              disabled={processing || downloading}
+              className="flex items-center gap-2 px-3 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-sm transition-colors disabled:opacity-50"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -269,6 +374,45 @@ export default function BulkActionsBar({
           </div>
         </div>
       </div>
+
+      {/* Limit Warning Modal */}
+      {showLimitWarning && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-zinc-900 rounded-xl max-w-md w-full overflow-hidden">
+            <div className="p-4 border-b border-zinc-700 flex items-center gap-3">
+              <div className="p-2 bg-amber-500/20 rounded-lg">
+                <svg className="w-6 h-6 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <h3 className="text-lg font-semibold text-white">Download Limit Exceeded</h3>
+            </div>
+
+            <div className="p-4">
+              <p className="text-zinc-300 whitespace-pre-line">{limitWarningMessage}</p>
+              
+              <div className="mt-4 p-3 bg-zinc-800 rounded-lg">
+                <p className="text-sm text-zinc-400">
+                  <strong className="text-zinc-300">Current selection:</strong>
+                </p>
+                <ul className="mt-1 text-sm text-zinc-400">
+                  <li>• Files: {selectedCount}</li>
+                  <li>• Total size: {formatFileSize(totalSelectedSize)}</li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-zinc-700 flex justify-end">
+              <button
+                onClick={() => setShowLimitWarning(false)}
+                className="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg font-medium transition-colors"
+              >
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Tag Modal */}
       {showTagModal && (
