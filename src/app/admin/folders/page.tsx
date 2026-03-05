@@ -393,8 +393,8 @@ export default function FoldersPage() {
             )}
           </div>
           
-          {/* Actions */}
-          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          {/* Actions - always visible on mobile, hover on desktop */}
+          <div className="flex gap-1 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
             <button
               onClick={() => openCreateModal(folder)}
               className="p-1.5 text-zinc-400 hover:text-cyan-400 hover:bg-zinc-700 rounded"
