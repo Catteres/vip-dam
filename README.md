@@ -71,7 +71,10 @@ ssh root@82.25.91.9 "pm2 restart vip-dam"
 - [x] Asset library with grid/list view
 - [x] Drag & drop upload with tag selection
 - [x] Tag management with categories
-- [x] Smart folders (saved filter queries)
+- [x] **Hierarchical folders** - nested folder tree like a file system
+  - Parent folders for navigation (Doctors → New York → Dr Smith)
+  - Leaf folders with tag filters show matching assets
+  - Expand/collapse tree view, create subfolders inline
 - [x] User management (roles: admin/user)
 - [x] Activity log (download audit)
 - [x] Bulk actions (add/remove tags, ZIP download, delete)
