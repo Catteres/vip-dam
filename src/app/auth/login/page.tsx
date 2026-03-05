@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
+import { Logo } from '@/components/Logo'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -65,13 +66,10 @@ export default function LoginPage() {
         <div className="bg-gray-800 rounded-2xl p-8 border border-gray-700 shadow-xl">
           {/* Logo */}
           <div className="text-center mb-8">
-            <div className="w-16 h-16 bg-gradient-to-br from-cyan-500 to-teal-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
+            <div className="flex justify-center mb-4">
+              <Logo variant="white" className="h-12 w-auto" />
             </div>
-            <h1 className="text-2xl font-bold text-white">VIP DAM</h1>
-            <p className="text-gray-400 mt-1">Digital Asset Manager</p>
+            <p className="text-gray-400">Digital Asset Manager</p>
           </div>
 
           {/* Form */}

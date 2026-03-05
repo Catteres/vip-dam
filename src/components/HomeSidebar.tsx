@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import type { User } from '@supabase/supabase-js'
 import type { Folder } from '@/lib/types'
+import { Logo } from '@/components/Logo'
 
 const navigation = [
   { name: 'Browse', href: '/home', icon: '🖼️' },
@@ -77,7 +78,7 @@ export default function HomeSidebar({ user }: { user: User }) {
             )}
           </svg>
         </button>
-        <h1 className="text-lg font-bold text-white">VIP DAM</h1>
+        <Logo variant="white" className="h-7 w-auto" />
         <div className="w-10" />
       </div>
 
@@ -100,17 +101,10 @@ export default function HomeSidebar({ user }: { user: User }) {
         `}
       >
         <div className="p-6 hidden lg:block">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-cyan-500 to-teal-600 rounded-xl flex items-center justify-center">
-              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-            </div>
-            <div>
-              <h1 className="text-lg font-bold text-white">VIP DAM</h1>
-              <p className="text-xs text-gray-400">Asset Library</p>
-            </div>
-          </div>
+          <Link href="/home" className="block">
+            <Logo variant="white" className="h-10 w-auto" />
+          </Link>
+          <p className="text-xs text-gray-400 mt-2">Asset Library</p>
         </div>
 
         {/* Mobile spacer */}

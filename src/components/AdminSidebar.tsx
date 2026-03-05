@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useUpload } from '@/context/UploadContext'
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { Logo, LogoIcon } from '@/components/Logo'
 
 const navItems = [
   { href: '/admin', label: 'Library', icon: '🖼️' },
@@ -55,11 +56,10 @@ export default function AdminSidebar() {
   const sidebarContent = (
     <>
       <div className="mb-8">
-        <Link href="/admin" className="flex items-center gap-2">
-          <span className="text-2xl">📸</span>
-          <span className="text-xl font-bold">VIP DAM</span>
+        <Link href="/admin" className="block">
+          <Logo variant="white" className="h-10 w-auto" />
         </Link>
-        <p className="text-zinc-500 text-xs mt-1">Digital Asset Manager</p>
+        <p className="text-zinc-500 text-xs mt-2">Digital Asset Manager</p>
       </div>
 
       <nav className="space-y-1 flex-1">
@@ -153,9 +153,8 @@ export default function AdminSidebar() {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
           </svg>
         </button>
-        <Link href="/admin" className="flex items-center gap-2 ml-2">
-          <span className="text-xl">📸</span>
-          <span className="text-lg font-bold text-white">VIP DAM</span>
+        <Link href="/admin" className="ml-2">
+          <Logo variant="white" className="h-8 w-auto" />
         </Link>
       </div>
 
