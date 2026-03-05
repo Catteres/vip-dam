@@ -2,7 +2,18 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import type { Folder, Tag } from '@/lib/types'
+import type { Tag } from '@/lib/types'
+
+interface HierarchicalFolder {
+  id: string
+  name: string
+  description: string | null
+  parent_id: string | null
+  filter_query: FilterQuery
+  sort_order: number
+  created_at: string
+  children?: HierarchicalFolder[]
+}
 
 interface FilterQuery {
   search?: string
@@ -13,18 +24,24 @@ interface FilterQuery {
 }
 
 export default function FoldersPage() {
-  const [folders, setFolders] = useState<Folder[]>([])
+  const [folders, setFolders] = useState<HierarchicalFolder[]>([])
+  const [folderTree, setFolderTree] = useState<HierarchicalFolder[]>([])
   const [allTags, setAllTags] = useState<Tag[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   
+  // Expanded folders in tree view
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  
   // Modal state
   const [isModalOpen, setIsModalOpen] = useState(false)
-  const [editingFolder, setEditingFolder] = useState<Folder | null>(null)
+  const [editingFolder, setEditingFolder] = useState<HierarchicalFolder | null>(null)
+  const [parentFolder, setParentFolder] = useState<HierarchicalFolder | null>(null)
   
   // Form state
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
+  const [selectedParentId, setSelectedParentId] = useState<string | null>(null)
   const [filterQuery, setFilterQuery] = useState<FilterQuery>({
     search: '',
     tags: [],
@@ -39,12 +56,28 @@ export default function FoldersPage() {
   
   // Delete confirmation
   const [deleteId, setDeleteId] = useState<string | null>(null)
+  const [deleteFolder, setDeleteFolder] = useState<HierarchicalFolder | null>(null)
   
   const supabase = createClient()
+
+  // Build tree structure from flat list
+  const buildTree = (items: HierarchicalFolder[], parentId: string | null = null): HierarchicalFolder[] => {
+    return items
+      .filter(item => item.parent_id === parentId)
+      .sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name))
+      .map(item => ({
+        ...item,
+        children: buildTree(items, item.id)
+      }))
+  }
 
   useEffect(() => {
     loadData()
   }, [])
+
+  useEffect(() => {
+    setFolderTree(buildTree(folders))
+  }, [folders])
 
   const loadData = async () => {
     setLoading(true)
@@ -53,6 +86,7 @@ export default function FoldersPage() {
     const { data: foldersData } = await supabase
       .from('dam_folders')
       .select('*')
+      .order('sort_order')
       .order('name')
     
     setFolders(foldersData || [])
@@ -68,20 +102,36 @@ export default function FoldersPage() {
     setLoading(false)
   }
 
-  const openCreateModal = () => {
+  const toggleExpanded = (folderId: string) => {
+    setExpandedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(folderId)) {
+        next.delete(folderId)
+      } else {
+        next.add(folderId)
+      }
+      return next
+    })
+  }
+
+  const openCreateModal = (parent: HierarchicalFolder | null = null) => {
     setEditingFolder(null)
+    setParentFolder(parent)
     setName('')
     setDescription('')
+    setSelectedParentId(parent?.id || null)
     setFilterQuery({ search: '', tags: [], orientation: '', dateFrom: '', dateTo: '' })
     setPreviewCount(null)
     setIsModalOpen(true)
   }
 
-  const openEditModal = (folder: Folder) => {
+  const openEditModal = (folder: HierarchicalFolder) => {
     setEditingFolder(folder)
+    setParentFolder(null)
     setName(folder.name)
     setDescription(folder.description || '')
-    setFilterQuery(folder.filter_query as FilterQuery || { search: '', tags: [], orientation: '', dateFrom: '', dateTo: '' })
+    setSelectedParentId(folder.parent_id)
+    setFilterQuery(folder.filter_query || { search: '', tags: [], orientation: '', dateFrom: '', dateTo: '' })
     setPreviewCount(null)
     setIsModalOpen(true)
   }
@@ -89,41 +139,43 @@ export default function FoldersPage() {
   const closeModal = () => {
     setIsModalOpen(false)
     setEditingFolder(null)
+    setParentFolder(null)
+  }
+
+  // Check if filter has any criteria
+  const hasFilters = (fq: FilterQuery): boolean => {
+    return !!(fq.search?.trim() || fq.tags?.length || fq.orientation || fq.dateFrom || fq.dateTo)
   }
 
   // Count matching assets for preview
   const countMatchingAssets = useCallback(async () => {
+    if (!hasFilters(filterQuery)) {
+      setPreviewCount(null)
+      return
+    }
+    
     setPreviewLoading(true)
     
     try {
-      // Build query to count matching assets
       let query = supabase.from('dam_assets').select('id', { count: 'exact', head: true })
       
-      // Apply date filters
       if (filterQuery.dateFrom) {
         query = query.gte('created_at', filterQuery.dateFrom)
       }
       if (filterQuery.dateTo) {
         query = query.lte('created_at', filterQuery.dateTo + 'T23:59:59')
       }
-      
-      // Apply orientation filter
       if (filterQuery.orientation) {
         query = query.eq('orientation', filterQuery.orientation)
       }
       
-      // For search and tags, we need to do a more complex query
-      // First get all assets that match basic filters
       const { count: basicCount, error } = await query
       
       if (error) {
-        console.error('Error counting assets:', error)
         setPreviewCount(null)
         return
       }
       
-      // If there are tag filters or search, we need to fetch and filter client-side
-      // for simplicity (in production, this would be a more efficient query)
       if (filterQuery.tags?.length || filterQuery.search) {
         const { data: assets } = await supabase
           .from('dam_assets')
@@ -136,10 +188,6 @@ export default function FoldersPage() {
           .order('created_at', { ascending: false })
         
         const filteredAssets = (assets || []).filter(asset => {
-          // Date filters
-          // (already applied in initial query for efficiency, but re-check here)
-          
-          // Search filter
           if (filterQuery.search) {
             const searchLower = filterQuery.search.toLowerCase()
             const nameMatch = asset.name.toLowerCase().includes(searchLower)
@@ -150,7 +198,6 @@ export default function FoldersPage() {
             if (!nameMatch && !tagMatch) return false
           }
           
-          // Tag filter
           if (filterQuery.tags && filterQuery.tags.length > 0) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const assetTagIds = (asset.dam_asset_tags || []).map((at: any) => at.tag?.id).filter(Boolean)
@@ -174,10 +221,9 @@ export default function FoldersPage() {
     setPreviewLoading(false)
   }, [filterQuery, supabase])
 
-  // Debounce preview count
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (isModalOpen) {
+      if (isModalOpen && hasFilters(filterQuery)) {
         countMatchingAssets()
       }
     }, 500)
@@ -189,7 +235,6 @@ export default function FoldersPage() {
     
     setSaving(true)
     
-    // Clean up filter query - remove empty values
     const cleanedFilter: FilterQuery = {}
     if (filterQuery.search?.trim()) cleanedFilter.search = filterQuery.search.trim()
     if (filterQuery.tags?.length) cleanedFilter.tags = filterQuery.tags
@@ -198,12 +243,12 @@ export default function FoldersPage() {
     if (filterQuery.dateTo) cleanedFilter.dateTo = filterQuery.dateTo
     
     if (editingFolder) {
-      // Update
       const { error } = await supabase
         .from('dam_folders')
         .update({
           name: name.trim(),
           description: description.trim() || null,
+          parent_id: selectedParentId,
           filter_query: cleanedFilter
         })
         .eq('id', editingFolder.id)
@@ -213,12 +258,12 @@ export default function FoldersPage() {
         alert('Failed to update folder')
       }
     } else {
-      // Create
       const { error } = await supabase
         .from('dam_folders')
         .insert({
           name: name.trim(),
           description: description.trim() || null,
+          parent_id: selectedParentId,
           filter_query: cleanedFilter
         })
       
@@ -245,6 +290,7 @@ export default function FoldersPage() {
     }
     
     setDeleteId(null)
+    setDeleteFolder(null)
     loadData()
   }
 
@@ -257,7 +303,6 @@ export default function FoldersPage() {
     }))
   }
 
-  // Group tags by category for display
   const tagsByCategory = allTags.reduce((acc, tag) => {
     const cat = tag.category || 'Other'
     if (!acc[cat]) acc[cat] = []
@@ -265,19 +310,138 @@ export default function FoldersPage() {
     return acc
   }, {} as Record<string, Tag[]>)
 
-  const getFilterSummary = (folder: Folder) => {
-    const fq = folder.filter_query as FilterQuery
+  const getFilterSummary = (folder: HierarchicalFolder) => {
+    const fq = folder.filter_query
+    if (!fq || !hasFilters(fq)) return null
+    
     const parts: string[] = []
-    if (fq?.search) parts.push(`"${fq.search}"`)
-    if (fq?.tags?.length) {
+    if (fq.tags?.length) {
       const tagLabels = fq.tags.map(id => allTags.find(t => t.id === id)?.label).filter(Boolean)
-      parts.push(`Tags: ${tagLabels.join(', ')}`)
+      parts.push(tagLabels.join(', '))
     }
-    if (fq?.orientation) parts.push(`${fq.orientation}`)
-    if (fq?.dateFrom || fq?.dateTo) {
-      parts.push(`Date: ${fq.dateFrom || '...'} to ${fq.dateTo || '...'}`)
+    if (fq.search) parts.push(`"${fq.search}"`)
+    if (fq.orientation) parts.push(fq.orientation)
+    return parts.join(' • ')
+  }
+
+  // Get all possible parent folders (excluding self and descendants)
+  const getAvailableParents = (excludeId?: string): HierarchicalFolder[] => {
+    if (!excludeId) return folders
+    
+    const getDescendantIds = (parentId: string): string[] => {
+      const children = folders.filter(f => f.parent_id === parentId)
+      return [parentId, ...children.flatMap(c => getDescendantIds(c.id))]
     }
-    return parts.length > 0 ? parts.join(' • ') : 'No filters'
+    
+    const excludeIds = new Set(getDescendantIds(excludeId))
+    return folders.filter(f => !excludeIds.has(f.id))
+  }
+
+  // Render folder tree item
+  const renderFolderItem = (folder: HierarchicalFolder, depth: number = 0) => {
+    const hasChildren = folder.children && folder.children.length > 0
+    const isExpanded = expandedIds.has(folder.id)
+    const filterSummary = getFilterSummary(folder)
+    const isLeaf = !hasChildren && hasFilters(folder.filter_query)
+    
+    return (
+      <div key={folder.id}>
+        <div 
+          className={`flex items-center gap-2 py-2 px-3 rounded-lg hover:bg-zinc-800 group transition-colors ${
+            depth > 0 ? 'ml-6' : ''
+          }`}
+        >
+          {/* Expand/collapse button */}
+          <button
+            onClick={() => hasChildren && toggleExpanded(folder.id)}
+            className={`w-5 h-5 flex items-center justify-center text-zinc-500 ${
+              hasChildren ? 'hover:text-white cursor-pointer' : 'opacity-0'
+            }`}
+          >
+            {hasChildren && (
+              <svg 
+                className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-90' : ''}`} 
+                fill="none" 
+                stroke="currentColor" 
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            )}
+          </button>
+          
+          {/* Folder icon */}
+          <span className="text-xl">
+            {isLeaf ? '📄' : hasChildren && isExpanded ? '📂' : '📁'}
+          </span>
+          
+          {/* Folder name and info */}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-white truncate">{folder.name}</span>
+              {filterSummary && (
+                <span className="text-xs text-cyan-400 bg-cyan-400/10 px-2 py-0.5 rounded-full truncate max-w-48">
+                  {filterSummary}
+                </span>
+              )}
+              {!filterSummary && !hasChildren && (
+                <span className="text-xs text-zinc-500">(empty)</span>
+              )}
+            </div>
+            {folder.description && (
+              <p className="text-xs text-zinc-500 truncate">{folder.description}</p>
+            )}
+          </div>
+          
+          {/* Actions */}
+          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              onClick={() => openCreateModal(folder)}
+              className="p-1.5 text-zinc-400 hover:text-cyan-400 hover:bg-zinc-700 rounded"
+              title="Add subfolder"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+            </button>
+            <button
+              onClick={() => openEditModal(folder)}
+              className="p-1.5 text-zinc-400 hover:text-white hover:bg-zinc-700 rounded"
+              title="Edit"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+              </svg>
+            </button>
+            <button
+              onClick={() => { setDeleteId(folder.id); setDeleteFolder(folder) }}
+              className="p-1.5 text-zinc-400 hover:text-red-400 hover:bg-zinc-700 rounded"
+              title="Delete"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        
+        {/* Children */}
+        {hasChildren && isExpanded && (
+          <div className="border-l border-zinc-800 ml-5">
+            {folder.children!.map(child => renderFolderItem(child, depth + 1))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // Get folder path for display
+  const getFolderPath = (folderId: string | null): string => {
+    if (!folderId) return ''
+    const folder = folders.find(f => f.id === folderId)
+    if (!folder) return ''
+    const parentPath = getFolderPath(folder.parent_id)
+    return parentPath ? `${parentPath} / ${folder.name}` : folder.name
   }
 
   return (
@@ -285,16 +449,16 @@ export default function FoldersPage() {
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">Folders</h1>
-          <p className="text-zinc-400 mt-1">Create virtual folders using saved filter queries</p>
+          <p className="text-zinc-400 mt-1">Organize assets with hierarchical folders</p>
         </div>
         <button
-          onClick={openCreateModal}
+          onClick={() => openCreateModal(null)}
           className="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-500 flex items-center gap-2"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
           </svg>
-          Create Folder
+          New Folder
         </button>
       </div>
 
@@ -308,9 +472,9 @@ export default function FoldersPage() {
         <div className="text-center py-12 bg-zinc-800 rounded-lg border border-zinc-700">
           <div className="text-zinc-600 text-5xl mb-4">📁</div>
           <h3 className="text-lg font-medium text-white mb-1">No folders yet</h3>
-          <p className="text-zinc-400 mb-4">Create virtual folders to save filter combinations for quick access</p>
+          <p className="text-zinc-400 mb-4">Create a folder hierarchy to organize your assets</p>
           <button
-            onClick={openCreateModal}
+            onClick={() => openCreateModal(null)}
             className="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-500"
           >
             Create Your First Folder
@@ -319,48 +483,8 @@ export default function FoldersPage() {
       )}
 
       {!loading && folders.length > 0 && (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {folders.map(folder => (
-            <div
-              key={folder.id}
-              className="bg-zinc-800 rounded-lg border border-zinc-700 p-4 hover:border-zinc-600 transition-colors"
-            >
-              <div className="flex items-start justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-2xl">📁</span>
-                  <h3 className="font-semibold text-white">{folder.name}</h3>
-                </div>
-                <div className="flex gap-1">
-                  <button
-                    onClick={() => openEditModal(folder)}
-                    className="p-1.5 text-zinc-400 hover:text-white hover:bg-zinc-700 rounded"
-                    title="Edit"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                    </svg>
-                  </button>
-                  <button
-                    onClick={() => setDeleteId(folder.id)}
-                    className="p-1.5 text-zinc-400 hover:text-red-400 hover:bg-zinc-700 rounded"
-                    title="Delete"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-              
-              {folder.description && (
-                <p className="text-zinc-400 text-sm mb-3">{folder.description}</p>
-              )}
-              
-              <div className="text-xs text-zinc-500 bg-zinc-900 rounded px-2 py-1.5">
-                {getFilterSummary(folder)}
-              </div>
-            </div>
-          ))}
+        <div className="bg-zinc-900 rounded-lg border border-zinc-800 p-2">
+          {folderTree.map(folder => renderFolderItem(folder))}
         </div>
       )}
 
@@ -370,8 +494,13 @@ export default function FoldersPage() {
           <div className="bg-zinc-900 rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-zinc-800">
               <h2 className="text-xl font-bold text-white">
-                {editingFolder ? 'Edit Folder' : 'Create Folder'}
+                {editingFolder ? 'Edit Folder' : parentFolder ? `New Subfolder in "${parentFolder.name}"` : 'New Folder'}
               </h2>
+              {selectedParentId && !editingFolder && (
+                <p className="text-sm text-zinc-400 mt-1">
+                  Path: {getFolderPath(selectedParentId)}
+                </p>
+              )}
             </div>
             
             <div className="p-6 space-y-6">
@@ -384,10 +513,32 @@ export default function FoldersPage() {
                   type="text"
                   value={name}
                   onChange={e => setName(e.target.value)}
-                  placeholder="e.g., Doctor Headshots"
+                  placeholder="e.g., New York"
                   className="w-full px-4 py-2.5 bg-zinc-800 border border-zinc-700 rounded-lg text-white placeholder-zinc-500 focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+                  autoFocus
                 />
               </div>
+              
+              {/* Parent Folder (for editing) */}
+              {editingFolder && (
+                <div>
+                  <label className="block text-sm font-medium text-zinc-300 mb-2">
+                    Parent Folder
+                  </label>
+                  <select
+                    value={selectedParentId || ''}
+                    onChange={e => setSelectedParentId(e.target.value || null)}
+                    className="w-full px-4 py-2.5 bg-zinc-800 border border-zinc-700 rounded-lg text-white focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+                  >
+                    <option value="">None (Root Level)</option>
+                    {getAvailableParents(editingFolder.id).map(f => (
+                      <option key={f.id} value={f.id}>
+                        {getFolderPath(f.id) || f.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               
               {/* Description */}
               <div>
@@ -409,57 +560,9 @@ export default function FoldersPage() {
                   <svg className="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
                   </svg>
-                  Filter Criteria
+                  Asset Filters
+                  <span className="text-xs text-zinc-500 font-normal">(leave empty for navigation-only folder)</span>
                 </h3>
-                
-                {/* Search Term */}
-                <div>
-                  <label className="block text-xs text-zinc-400 mb-1">Search Term</label>
-                  <input
-                    type="text"
-                    value={filterQuery.search || ''}
-                    onChange={e => setFilterQuery(prev => ({ ...prev, search: e.target.value }))}
-                    placeholder="Search names or tags..."
-                    className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white text-sm placeholder-zinc-500 focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
-                  />
-                </div>
-                
-                {/* Orientation */}
-                <div>
-                  <label className="block text-xs text-zinc-400 mb-1">Orientation</label>
-                  <select
-                    value={filterQuery.orientation || ''}
-                    onChange={e => setFilterQuery(prev => ({ ...prev, orientation: e.target.value as FilterQuery['orientation'] }))}
-                    className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
-                  >
-                    <option value="">Any orientation</option>
-                    <option value="landscape">Landscape</option>
-                    <option value="portrait">Portrait</option>
-                    <option value="square">Square</option>
-                  </select>
-                </div>
-                
-                {/* Date Range */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-zinc-400 mb-1">From Date</label>
-                    <input
-                      type="date"
-                      value={filterQuery.dateFrom || ''}
-                      onChange={e => setFilterQuery(prev => ({ ...prev, dateFrom: e.target.value }))}
-                      className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-zinc-400 mb-1">To Date</label>
-                    <input
-                      type="date"
-                      value={filterQuery.dateTo || ''}
-                      onChange={e => setFilterQuery(prev => ({ ...prev, dateTo: e.target.value }))}
-                      className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
-                    />
-                  </div>
-                </div>
                 
                 {/* Tags */}
                 {Object.keys(tagsByCategory).length > 0 && (
@@ -491,24 +594,51 @@ export default function FoldersPage() {
                   </div>
                 )}
                 
-                {/* Preview Count */}
-                <div className="pt-3 border-t border-zinc-700">
-                  <div className="flex items-center gap-2 text-sm">
-                    {previewLoading ? (
-                      <>
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-cyan-500"></div>
-                        <span className="text-zinc-400">Counting matches...</span>
-                      </>
-                    ) : previewCount !== null ? (
-                      <>
-                        <span className="text-cyan-400 font-semibold">{previewCount}</span>
-                        <span className="text-zinc-400">asset{previewCount !== 1 ? 's' : ''} match this filter</span>
-                      </>
-                    ) : (
-                      <span className="text-zinc-500">Unable to preview</span>
-                    )}
-                  </div>
+                {/* Orientation */}
+                <div>
+                  <label className="block text-xs text-zinc-400 mb-1">Orientation</label>
+                  <select
+                    value={filterQuery.orientation || ''}
+                    onChange={e => setFilterQuery(prev => ({ ...prev, orientation: e.target.value as FilterQuery['orientation'] }))}
+                    className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+                  >
+                    <option value="">Any orientation</option>
+                    <option value="landscape">Landscape</option>
+                    <option value="portrait">Portrait</option>
+                    <option value="square">Square</option>
+                  </select>
                 </div>
+                
+                {/* Search Term */}
+                <div>
+                  <label className="block text-xs text-zinc-400 mb-1">Search Term</label>
+                  <input
+                    type="text"
+                    value={filterQuery.search || ''}
+                    onChange={e => setFilterQuery(prev => ({ ...prev, search: e.target.value }))}
+                    placeholder="Search names or tags..."
+                    className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white text-sm placeholder-zinc-500 focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+                  />
+                </div>
+                
+                {/* Preview Count */}
+                {hasFilters(filterQuery) && (
+                  <div className="pt-3 border-t border-zinc-700">
+                    <div className="flex items-center gap-2 text-sm">
+                      {previewLoading ? (
+                        <>
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-cyan-500"></div>
+                          <span className="text-zinc-400">Counting matches...</span>
+                        </>
+                      ) : previewCount !== null ? (
+                        <>
+                          <span className="text-cyan-400 font-semibold">{previewCount}</span>
+                          <span className="text-zinc-400">asset{previewCount !== 1 ? 's' : ''} match this filter</span>
+                        </>
+                      ) : null}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
             
@@ -536,16 +666,20 @@ export default function FoldersPage() {
       )}
 
       {/* Delete Confirmation Modal */}
-      {deleteId && (
+      {deleteId && deleteFolder && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
           <div className="bg-zinc-900 rounded-xl max-w-md w-full p-6">
             <h3 className="text-lg font-bold text-white mb-2">Delete Folder?</h3>
-            <p className="text-zinc-400 mb-6">
-              This will permanently delete this folder. Assets won&apos;t be affected.
+            <p className="text-zinc-400 mb-4">
+              This will permanently delete &quot;{deleteFolder.name}&quot;
+              {deleteFolder.children && deleteFolder.children.length > 0 && (
+                <span className="text-red-400"> and all {deleteFolder.children.length} subfolder(s)</span>
+              )}
+              . Assets won&apos;t be affected.
             </p>
             <div className="flex justify-end gap-3">
               <button
-                onClick={() => setDeleteId(null)}
+                onClick={() => { setDeleteId(null); setDeleteFolder(null) }}
                 className="px-4 py-2 text-zinc-400 hover:text-white"
               >
                 Cancel

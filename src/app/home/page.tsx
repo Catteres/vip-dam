@@ -2,11 +2,12 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useSearchParams } from 'next/navigation'
+import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import type { Folder } from '@/lib/types'
 import AssetGridSkeleton from '@/components/AssetGridSkeleton'
 import DownloadOptions from '@/components/DownloadOptions'
+import FolderNav from '@/components/FolderNav'
 
 interface Asset {
   id: string
@@ -58,8 +59,10 @@ export default function HomePage() {
   
   // Folder filter from URL
   const searchParams = useSearchParams()
+  const router = useRouter()
   const folderId = searchParams.get('folder')
   const [activeFolder, setActiveFolder] = useState<Folder | null>(null)
+  const [showFolderNav, setShowFolderNav] = useState(false)
   
   const supabase = createClient()
 
@@ -146,6 +149,17 @@ export default function HomePage() {
       setOrientationFilter('')
     }
   }, [folderId])
+
+  // Handle folder selection from FolderNav
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handleFolderSelect = (folder: any | null) => {
+    if (folder) {
+      router.push(`/home?folder=${folder.id}`)
+    } else {
+      router.push('/home')
+    }
+    setShowFolderNav(false)
+  }
 
   // Debounce search query - 300ms delay
   useEffect(() => {
@@ -391,24 +405,65 @@ export default function HomePage() {
         </div>
       </header>
 
-      <div className="max-w-7xl mx-auto px-3 sm:px-4 py-4 sm:py-6">
-        {/* Active Folder Banner */}
-        {activeFolder && (
-          <div className="mb-4 p-3 bg-cyan-900/30 border border-cyan-700/50 rounded-lg flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-cyan-400">📁</span>
-              <span className="text-cyan-200 text-sm">
-                Viewing folder: <strong>{activeFolder.name}</strong>
-              </span>
+      {/* Folder Navigation Slide Panel */}
+      {showFolderNav && (
+        <div className="fixed inset-0 z-50 flex">
+          <div 
+            className="absolute inset-0 bg-black/60"
+            onClick={() => setShowFolderNav(false)}
+          />
+          <div className="relative w-72 max-w-[80vw] bg-zinc-900 border-r border-zinc-800 h-full overflow-hidden flex flex-col">
+            <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
+              <h2 className="font-semibold text-white">Folders</h2>
+              <button
+                onClick={() => setShowFolderNav(false)}
+                className="text-zinc-400 hover:text-white"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
-            <Link
-              href="/home"
-              className="text-xs text-cyan-400 hover:text-cyan-300"
-            >
-              Clear filter
-            </Link>
+            <div className="flex-1 overflow-y-auto">
+              <FolderNav
+                currentFolderId={folderId}
+                onFolderSelect={handleFolderSelect}
+              />
+            </div>
           </div>
-        )}
+        </div>
+      )}
+
+      <div className="max-w-7xl mx-auto px-3 sm:px-4 py-4 sm:py-6">
+        {/* Folder Navigation Button & Active Folder Banner */}
+        <div className="mb-4 flex items-center gap-3">
+          <button
+            onClick={() => setShowFolderNav(true)}
+            className="flex items-center gap-2 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm text-zinc-300 transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+            </svg>
+            Folders
+          </button>
+          
+          {activeFolder && (
+            <div className="flex-1 p-2 bg-cyan-900/30 border border-cyan-700/50 rounded-lg flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-cyan-400">📁</span>
+                <span className="text-cyan-200 text-sm">
+                  <strong>{activeFolder.name}</strong>
+                </span>
+              </div>
+              <Link
+                href="/home"
+                className="text-xs text-cyan-400 hover:text-cyan-300"
+              >
+                ✕ Clear
+              </Link>
+            </div>
+          )}
+        </div>
 
         {/* Search & Filters */}
         <div className="mb-4 sm:mb-6 space-y-3 sm:space-y-4">
