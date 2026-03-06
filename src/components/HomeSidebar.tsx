@@ -45,10 +45,9 @@ export default function HomeSidebar({ user }: { user: User }) {
     setFoldersLoading(false)
   }
 
-  const handleSignOut = async () => {
-    await supabase.auth.signOut()
-    router.push('/auth/login')
-    router.refresh()
+  const handleSignOut = () => {
+    // Use server-side logout to properly clear cookies
+    window.location.href = '/auth/logout'
   }
 
   const applyFolderFilter = (folder: Folder) => {

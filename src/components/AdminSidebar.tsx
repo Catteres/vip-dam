@@ -47,10 +47,9 @@ export default function AdminSidebar() {
     return () => window.removeEventListener('keydown', handleEsc)
   }, [])
 
-  const handleSignOut = async () => {
-    await supabase.auth.signOut()
-    router.push('/auth/login')
-    router.refresh()
+  const handleSignOut = () => {
+    // Use server-side logout to properly clear cookies
+    window.location.href = '/auth/logout'
   }
 
   const sidebarContent = (
