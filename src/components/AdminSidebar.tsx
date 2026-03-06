@@ -49,7 +49,9 @@ export default function AdminSidebar() {
 
   const handleSignOut = () => {
     // Use server-side logout to properly clear cookies
-    window.location.href = '/auth/logout'
+    // Detect base path for deployed /vip-dam route
+    const basePath = window.location.pathname.startsWith('/vip-dam') ? '/vip-dam' : ''
+    window.location.href = `${basePath}/auth/logout`
   }
 
   const sidebarContent = (

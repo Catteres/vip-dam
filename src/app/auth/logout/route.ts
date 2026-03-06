@@ -24,9 +24,9 @@ export async function POST(request: NextRequest) {
 
   await supabase.auth.signOut()
 
-  // Determine correct login path based on referer
-  const referer = request.headers.get('referer') || ''
-  const loginPath = referer.includes('/vip-dam') ? '/vip-dam/auth/login' : '/auth/login'
+  // Determine correct login path based on current URL path
+  const pathname = request.nextUrl.pathname
+  const loginPath = pathname.startsWith('/vip-dam') ? '/vip-dam/auth/login' : '/auth/login'
 
   return NextResponse.redirect(new URL(loginPath, request.url), {
     status: 302,
